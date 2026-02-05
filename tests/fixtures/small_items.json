@@ -1,0 +1,12 @@
+{
+    "items": [
+        {"id": "box_a", "width": 10, "height": 10, "depth": 10, "quantity": 4},
+        {"id": "box_b", "width": 20, "height": 15, "depth": 10, "quantity": 2},
+        {"id": "box_c", "width": 30, "height": 20, "depth": 15, "quantity": 1},
+        {"id": "fragile", "width": 15, "height": 15, "depth": 15, "this_side_up": true, "do_not_stack": true},
+        {"id": "heavy", "width": 25, "height": 10, "depth": 20, "weight": 50.0}
+    ],
+    "bins": [
+        {"id": "standard", "width": 100, "height": 100, "depth": 100, "max_weight": 500.0}
+    ]
+}

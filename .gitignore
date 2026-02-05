@@ -1,0 +1,92 @@
+# Build artifacts
+build/
+cmake-build-*/
+out/
+_deps/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pch
+*.gch
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CMakeUserPresets.json
+
+# Testing
+Testing/
+CTestTestfile.cmake
+GoogleTestDownloadInfo.txt
+
+# Documentation
+html/
+latex/
+docs/generated/
+Doxyfile.local
+
+# Package artifacts
+*.tar.gz
+*.zip
+_CPack_Packages/
+
+# Clangd / clang-tidy
+.cache/
+.clangd
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Coverage
+*.gcov
+*.gcda
+*.gcno
+coverage/
+*.profraw
+*.profdata
+
+# Sanitizer logs
+asan.log.*
+tsan.log.*
+ubsan.log.*
+
+# Editor backup files
+*.bak
+*.orig
+*.rej
+
+# Conan / vcpkg
+conan/
+conanbuildinfo.*
+conaninfo.txt
+graph_info.json
+vcpkg_installed/

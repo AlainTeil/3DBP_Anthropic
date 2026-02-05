@@ -1,0 +1,17 @@
+{
+    "items": [
+        {"id": "large_box", "width": 60, "height": 60, "depth": 60, "weight": 50},
+        {"id": "medium_1", "width": 40, "height": 40, "depth": 40, "weight": 20},
+        {"id": "medium_2", "width": 35, "height": 35, "depth": 35, "weight": 15},
+        {"id": "fragile", "width": 20, "height": 30, "depth": 20, "this_side_up": true, "weight": 5},
+        {"id": "small_box", "width": 15, "height": 15, "depth": 15, "quantity": 5},
+        {"id": "tiny_box", "width": 10, "height": 10, "depth": 10, "quantity": 10}
+    ],
+    "bins": [
+        {"id": "small_container", "width": 80, "height": 80, "depth": 80, "max_weight": 100, "cost": 5.0},
+        {"id": "large_container", "width": 150, "height": 150, "depth": 150, "max_weight": 500, "cost": 15.0}
+    ],
+    "options": {
+        "allow_multiple_bins": true
+    }
+}

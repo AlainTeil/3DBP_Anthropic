@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  # =============================================================================
+  # Build and Test with GCC
+  # =============================================================================
+  build-gcc:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCMAKE_CXX_COMPILER=g++ \
+          -DBP3D_BUILD_TESTS=ON
+    
+    - name: Build
+      run: cmake --build build --parallel
+    
+    - name: Test
+      run: ctest --test-dir build --output-on-failure
+
+  # =============================================================================
+  # Build and Test with Clang
+  # =============================================================================
+  build-clang:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build clang
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBP3D_BUILD_TESTS=ON
+    
+    - name: Build
+      run: cmake --build build --parallel
+    
+    - name: Test
+      run: ctest --test-dir build --output-on-failure
+
+  # =============================================================================
+  # Static Analysis with clang-tidy
+  # =============================================================================
+  clang-tidy:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build clang clang-tidy
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBP3D_ENABLE_CLANG_TIDY=ON \
+          -DBP3D_BUILD_TESTS=ON
+    
+    - name: Build with clang-tidy
+      run: cmake --build build --parallel
+
+  # =============================================================================
+  # AddressSanitizer + UndefinedBehaviorSanitizer
+  # =============================================================================
+  sanitizer-asan:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build clang
+    
+    - name: Configure CMake with ASan + UBSan
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBP3D_ENABLE_ASAN=ON \
+          -DBP3D_ENABLE_UBSAN=ON \
+          -DBP3D_BUILD_TESTS=ON
+    
+    - name: Build
+      run: cmake --build build --parallel
+    
+    - name: Test with ASan
+      env:
+        ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      run: ctest --test-dir build --output-on-failure
+
+  # =============================================================================
+  # ThreadSanitizer
+  # =============================================================================
+  sanitizer-tsan:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build clang
+    
+    - name: Configure CMake with TSan
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DBP3D_ENABLE_TSAN=ON \
+          -DBP3D_BUILD_TESTS=ON
+    
+    - name: Build
+      run: cmake --build build --parallel
+    
+    - name: Test with TSan
+      env:
+        TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+      run: ctest --test-dir build --output-on-failure
+
+  # =============================================================================
+  # Code Formatting Check
+  # =============================================================================
+  format-check:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
+    
+    - name: Configure CMake
+      run: cmake -B build
+    
+    - name: Check formatting
+      run: cmake --build build --target format-check
