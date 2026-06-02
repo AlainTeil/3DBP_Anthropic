@@ -6,6 +6,15 @@
 #include "bp3d/constraints/weight.hpp"
 
 #include "bp3d/constraints/stacking.hpp"
+#include "bp3d/constraints/validator.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+
+#include <algorithm>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace bp3d {
 
@@ -32,7 +41,7 @@ double calculate_stacked_weight(const Placement& item_placement,
         }
 
         // Check if 'other' is on top of item_placement
-        if (is_on_top_of(item_placement, other, 1e-6)) {
+        if (is_on_top_of(item_placement, other, kContactTolerance)) {
             auto it = item_weights.find(other.item_id);
             if (it != item_weights.end()) {
                 total_weight += it->second;
@@ -68,21 +77,19 @@ bool WeightValidator::can_place(const Item& item, const Placement& proposed,
 
     // Check if placing this item on top of any existing item would exceed
     // that item's max stack weight
-    for (const auto& below : existing) {
-        if (is_on_top_of(below, proposed, 1e-6)) {
-            // Look up the item in the registry to check max_stack_weight
-            auto it = registry.find(below.item_id);
-            if (it != registry.end()) {
-                const Item& below_item = it->second;
-                if (below_item.constraints.max_stack_weight > 0 &&
-                    item.weight > below_item.constraints.max_stack_weight) {
-                    return false;  // Would exceed max stack weight
-                }
-            }
+    return std::ranges::none_of(existing, [&](const Placement& below) {
+        if (!is_on_top_of(below, proposed, kContactTolerance)) {
+            return false;
         }
-    }
-
-    return true;
+        // Look up the item in the registry to check max_stack_weight
+        const auto it = registry.find(below.item_id);
+        if (it == registry.end()) {
+            return false;
+        }
+        const Item& below_item = it->second;
+        return below_item.constraints.max_stack_weight > 0 &&
+               item.weight > below_item.constraints.max_stack_weight;
+    });
 }
 
 }  // namespace bp3d

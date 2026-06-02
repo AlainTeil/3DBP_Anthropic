@@ -5,14 +5,25 @@
 
 #include "bp3d/io/json_serializer.hpp"
 
+#include "bp3d/result.hpp"
 #include "bp3d/rotation.hpp"
+#include "bp3d/types.hpp"
+#include "nlohmann/json_fwd.hpp"
 
+#include <bitset>
+#include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <span>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace bp3d {
 
+// NOLINTNEXTLINE(readability-identifier-naming) - 'json' is the idiomatic nlohmann alias.
 using json = nlohmann::json;
 
 // ============================================================================
@@ -159,21 +170,21 @@ void from_json(const json& j, Placement& p) {
     j.at("rotated_dimensions").get_to(p.rotated_dimensions);
 
     // Parse rotation from string
-    std::string rot_str = j.at("rotation").get<std::string>();
-    if (rot_str == "WHD")
-        p.rotation = Rotation::WHD;
-    else if (rot_str == "WDH")
+    std::string const rot_str = j.at("rotation").get<std::string>();
+    if (rot_str == "WDH") {
         p.rotation = Rotation::WDH;
-    else if (rot_str == "HWD")
+    } else if (rot_str == "HWD") {
         p.rotation = Rotation::HWD;
-    else if (rot_str == "HDW")
+    } else if (rot_str == "HDW") {
         p.rotation = Rotation::HDW;
-    else if (rot_str == "DWH")
+    } else if (rot_str == "DWH") {
         p.rotation = Rotation::DWH;
-    else if (rot_str == "DHW")
+    } else if (rot_str == "DHW") {
         p.rotation = Rotation::DHW;
-    else
+    } else {
+        // Default to WHD for "WHD" and any unrecognized value.
         p.rotation = Rotation::WHD;
+    }
 }
 
 // ============================================================================
@@ -184,6 +195,7 @@ void to_json(json& j, const PackingStats& s) {
     j = json{{"utilization", s.utilization},
              {"total_item_volume", s.total_item_volume},
              {"total_bin_volume", s.total_bin_volume},
+             {"total_cost", s.total_cost},
              {"execution_time_us", s.execution_time.count()}};
 }
 
@@ -220,17 +232,17 @@ std::string bin_types_to_json(std::span<const BinType> bins) {
 }
 
 std::string result_to_json(const PackingResult& result) {
-    json j = result;
+    json const j = result;
     return j.dump(2);
 }
 
 std::vector<Item> items_from_json(std::string_view json_str) {
-    json j = json::parse(json_str);
+    json const j = json::parse(json_str);
     return j.get<std::vector<Item>>();
 }
 
 std::vector<BinType> bin_types_from_json(std::string_view json_str) {
-    json j = json::parse(json_str);
+    json const j = json::parse(json_str);
     return j.get<std::vector<BinType>>();
 }
 
@@ -249,7 +261,7 @@ PackingInput input_from_json(std::string_view json_str) {
 }
 
 PackingInput load_input_file(const std::filesystem::path& path) {
-    std::ifstream file(path);
+    std::ifstream const file(path);
     if (!file) {
         throw std::runtime_error("Cannot open file: " + path.string());
     }

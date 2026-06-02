@@ -45,6 +45,7 @@ add_executable(bp3d_unit_tests
     unit/test_sorting.cpp
     unit/test_obj_export.cpp
     unit/test_edge_cases.cpp
+    unit/test_spatial_grid.cpp
 )
 
 target_link_libraries(bp3d_unit_tests PRIVATE
@@ -56,6 +57,7 @@ target_link_libraries(bp3d_unit_tests PRIVATE
 target_include_directories(bp3d_unit_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 enable_sanitizers(bp3d_unit_tests)
@@ -132,3 +134,13 @@ add_custom_target(run_all_tests
 
 # Copy test fixtures
 file(COPY fixtures DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# Exclude tests from clang-tidy: GoogleTest macros generate unavoidable noise,
+# and the project gate (WarningsAsErrors) targets library and application code.
+set_target_properties(
+    bp3d_tests
+    bp3d_unit_tests
+    bp3d_integration_tests
+    bp3d_system_tests
+    PROPERTIES CXX_CLANG_TIDY ""
+)

@@ -40,6 +40,7 @@ struct PackingStats {
     double utilization = 0.0;                     ///< Volume utilization ratio (0-1)
     double total_item_volume = 0.0;               ///< Total volume of packed items
     double total_bin_volume = 0.0;                ///< Total volume of used bins
+    double total_cost = 0.0;                      ///< Summed cost of the used bins
     std::chrono::microseconds execution_time{0};  ///< Time taken to compute
 };
 
@@ -73,7 +74,7 @@ struct UsedBin {
 
     /// Get utilization ratio for this bin
     [[nodiscard]] double utilization() const noexcept {
-        double total = dimensions.volume();
+        double const total = dimensions.volume();
         return total > 0.0 ? used_volume / total : 0.0;
     }
 };

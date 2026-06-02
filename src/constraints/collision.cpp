@@ -5,6 +5,13 @@
 
 #include "bp3d/constraints/collision.hpp"
 
+#include "bp3d/constraints/validator.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+
+#include <algorithm>
+#include <span>
+
 namespace bp3d {
 
 bool placements_overlap(const Placement& a, const Placement& b) {
@@ -41,13 +48,9 @@ bool CollisionValidator::can_place(const Item& /*item*/, const Placement& propos
     }
 
     // Check for collisions with existing placements
-    for (const auto& existing_placement : existing) {
-        if (placements_overlap(proposed, existing_placement)) {
-            return false;
-        }
-    }
-
-    return true;
+    return std::ranges::none_of(existing, [&](const Placement& existing_placement) {
+        return placements_overlap(proposed, existing_placement);
+    });
 }
 
 }  // namespace bp3d

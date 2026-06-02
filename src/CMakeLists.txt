@@ -26,6 +26,8 @@ set(LIBRARY_SOURCES
     # Internal utilities
     internal/geometry.cpp
     internal/free_space.cpp
+    internal/placement_engine.cpp
+    internal/spatial_grid.cpp
 )
 
 # Create library (static by default)

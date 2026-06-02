@@ -90,6 +90,17 @@ private:
 
 /**
  * @brief Create the default composite validator with all standard validators
+ *
+ * @param require_support When true, the stacking validator requires every
+ *        placement to rest on the floor or another item. When false, the
+ *        support requirement is skipped (useful for shelf/guillotine packers
+ *        that provide their own support semantics) while do-not-stack and
+ *        weight limits are still enforced.
+ */
+[[nodiscard]] std::unique_ptr<CompositeValidator> create_default_validator(bool require_support);
+
+/**
+ * @brief Create the default composite validator (with support required).
  */
 [[nodiscard]] std::unique_ptr<CompositeValidator> create_default_validator();
 

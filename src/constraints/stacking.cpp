@@ -5,8 +5,13 @@
 
 #include "bp3d/constraints/stacking.hpp"
 
+#include "bp3d/constraints/validator.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 namespace bp3d {
 
@@ -51,20 +56,16 @@ bool is_supported(const Placement& proposed, std::span<const Placement> existing
     }
 
     // Otherwise, check if any existing placement supports this one
-    for (const auto& placement : existing) {
-        if (is_on_top_of(placement, proposed, tolerance)) {
-            return true;
-        }
-    }
-
-    return false;
+    return std::ranges::any_of(existing, [&](const Placement& placement) {
+        return is_on_top_of(placement, proposed, tolerance);
+    });
 }
 
 bool StackingValidator::can_place(const Item& item, const Placement& proposed,
                                   std::span<const Placement> existing, const BinType& /*bin*/,
                                   const ItemRegistry& registry) const {
     // Check if we require support and this item is not supported
-    if (require_support_ && !is_supported(proposed, existing, 0.0, 1e-6)) {
+    if (require_support_ && !is_supported(proposed, existing, 0.0, kContactTolerance)) {
         return false;
     }
 
@@ -74,7 +75,7 @@ bool StackingValidator::can_place(const Item& item, const Placement& proposed,
 
     // Check if we're trying to place on top of a non-stackable item
     for (const auto& below : existing) {
-        if (is_on_top_of(below, proposed, 1e-6)) {
+        if (is_on_top_of(below, proposed, kContactTolerance)) {
             // This placement would be on top of 'below'
             // Look up the item in the registry to check stackable
             auto it = registry.find(below.item_id);

@@ -45,25 +45,45 @@ enum class Algorithm {
 }
 
 /**
+ * @brief Optimization objective used to choose the best packing.
+ *
+ * Selects how the parallel solver ranks the results produced by its candidate
+ * algorithms. In every case a more complete packing (fewer unpacked items) is
+ * preferred first; the objective then decides among equally complete results.
+ */
+enum class PackingObjective {
+    MinimizeBins,        ///< Prefer the fewest bins, then highest utilization
+    MinimizeCost,        ///< Prefer the lowest total bin cost, then fewest bins
+    MaximizeUtilization  ///< Prefer the highest volume utilization, then fewest bins
+};
+
+/**
  * @brief Configuration for the packing solver
  */
 struct SolverConfig {
     /// Available bin types to use for packing
     std::vector<BinType> bin_types;
 
-    /// Whether multiple bins can be used
+    /// Whether more than one bin may be opened. When false, packing is limited
+    /// to a single bin and any items that do not fit are reported as unpacked.
     bool allow_multiple_bins = true;
 
-    /// Maximum time to spend on solving
+    /// Optimization objective the parallel solver uses to pick the best result.
+    PackingObjective objective = PackingObjective::MinimizeBins;
+
+    /// Maximum wall-clock time to spend packing. Solvers check this between
+    /// items and stop placing once it is exceeded, reporting any remaining
+    /// items as unpacked. A non-positive value disables the limit.
     std::chrono::milliseconds timeout{std::chrono::minutes(5)};
 
-    /// Number of threads to use (0 = auto-detect)
+    /// Number of threads to use (0 = auto-detect). Bounds how many algorithms
+    /// the parallel solver runs concurrently.
     unsigned int thread_count = 0;
 
     /// Get effective thread count
     [[nodiscard]] unsigned int effective_thread_count() const noexcept {
         if (thread_count == 0) {
-            unsigned int hw = std::thread::hardware_concurrency();
+            unsigned int const hw = std::thread::hardware_concurrency();
             return hw > 0 ? hw : 1;
         }
         return thread_count;

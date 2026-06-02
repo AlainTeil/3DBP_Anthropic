@@ -3,16 +3,20 @@
  * @brief Edge case tests for the 3D bin packing library
  */
 
+#include "../../src/internal/placement_engine.hpp"
+
 #include <bp3d/algorithms/bfd.hpp>
 #include <bp3d/algorithms/extreme_point.hpp>
 #include <bp3d/algorithms/ffd.hpp>
 #include <bp3d/algorithms/guillotine.hpp>
+#include <bp3d/algorithms/parallel_solver.hpp>
 #include <bp3d/algorithms/shelf.hpp>
 #include <bp3d/bp3d.hpp>
 #include <bp3d/constraints/collision.hpp>
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -703,9 +707,12 @@ TEST_F(MultipleBinsEdgeCaseTest, DisallowMultipleBins) {
     items.push_back(Item{"b", {60.0, 100.0, 100.0}});
 
     auto result = solver.solve(items, config);
-    // When multiple bins not allowed and items don't fit in one bin,
-    // implementation may reject all items or pack partial
-    EXPECT_LE(result.bins_used, 1);  // At most 1 bin
+    // Single-bin mode must still use the one permitted bin: the first item is
+    // packed, the second (which would need a second bin) is left unpacked.
+    EXPECT_EQ(result.bins_used, 1);
+    EXPECT_EQ(result.placements.size(), 1u);
+    ASSERT_EQ(result.unpacked_items.size(), 1u);
+    EXPECT_EQ(result.unpacked_items.front(), "b");
 }
 
 TEST_F(MultipleBinsEdgeCaseTest, AllowMultipleBinsExact) {
@@ -733,6 +740,200 @@ TEST_F(MultipleBinsEdgeCaseTest, ManyBinsNeeded) {
     auto result = solver.solve(items, config);
     EXPECT_EQ(result.bins_used, 10);
     EXPECT_EQ(result.placements.size(), 10);
+}
+
+// =============================================================================
+// Single-bin mode consistency across every algorithm
+// =============================================================================
+//
+// With allow_multiple_bins == false, all five solvers must agree:
+//   1. the single permitted bin is opened and filled (overflow items become
+//      unpacked rather than silently dropped or forced into a second bin), and
+//   2. a bin that receives no item is never reported (no phantom empty bins),
+//      so an item that fits nowhere yields zero bins used.
+// FFD/BFD open the first bin lazily; ExtremePoint opens it lazily on the first
+// pack; Shelf pre-opens it in reset(). The shared make_result() filters empty
+// bins, so the observable result is identical regardless of that difference.
+
+template <class Solver>
+void expect_single_bin_overflow_unpacked() {
+    SolverConfig config;
+    config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    config.allow_multiple_bins = false;
+
+    std::vector<Item> items;
+    // Two items that together exceed the single bin's width (60 + 60 > 100).
+    items.push_back(Item{"a", {60.0, 100.0, 100.0}});
+    items.push_back(Item{"b", {60.0, 100.0, 100.0}});
+
+    Solver solver;
+    auto result = solver.solve(items, config);
+
+    // Exactly one item is packed into the one permitted bin; the other is
+    // unpacked. (Which of the two is packed can depend on the per-algorithm
+    // ordering, so only the counts are asserted.)
+    EXPECT_EQ(result.bins_used, 1);
+    EXPECT_EQ(result.placements.size(), 1u);
+    EXPECT_EQ(result.unpacked_items.size(), 1u);
+}
+
+template <class Solver>
+void expect_single_bin_nothing_fits() {
+    SolverConfig config;
+    config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    config.allow_multiple_bins = false;
+
+    std::vector<Item> items;
+    // Larger than the bin in every dimension: it can never be placed.
+    items.push_back(Item{"too_big", {200.0, 200.0, 200.0}});
+
+    Solver solver;
+    auto result = solver.solve(items, config);
+
+    // No bin received an item, so none is reported (no phantom empty bin).
+    EXPECT_EQ(result.bins_used, 0);
+    EXPECT_TRUE(result.placements.empty());
+    ASSERT_EQ(result.unpacked_items.size(), 1u);
+    EXPECT_EQ(result.unpacked_items.front(), "too_big");
+}
+
+TEST(SingleBinConsistencyTest, OverflowUnpacked_FFD) {
+    expect_single_bin_overflow_unpacked<FirstFitDecreasing>();
+}
+TEST(SingleBinConsistencyTest, OverflowUnpacked_BFD) {
+    expect_single_bin_overflow_unpacked<BestFitDecreasing>();
+}
+TEST(SingleBinConsistencyTest, OverflowUnpacked_Guillotine) {
+    expect_single_bin_overflow_unpacked<GuillotineSolver>();
+}
+TEST(SingleBinConsistencyTest, OverflowUnpacked_ExtremePoint) {
+    expect_single_bin_overflow_unpacked<ExtremePointSolver>();
+}
+TEST(SingleBinConsistencyTest, OverflowUnpacked_Shelf) {
+    expect_single_bin_overflow_unpacked<ShelfSolver>();
+}
+
+TEST(SingleBinConsistencyTest, NothingFits_FFD) {
+    expect_single_bin_nothing_fits<FirstFitDecreasing>();
+}
+TEST(SingleBinConsistencyTest, NothingFits_BFD) {
+    expect_single_bin_nothing_fits<BestFitDecreasing>();
+}
+TEST(SingleBinConsistencyTest, NothingFits_Guillotine) {
+    expect_single_bin_nothing_fits<GuillotineSolver>();
+}
+TEST(SingleBinConsistencyTest, NothingFits_ExtremePoint) {
+    expect_single_bin_nothing_fits<ExtremePointSolver>();
+}
+TEST(SingleBinConsistencyTest, NothingFits_Shelf) {
+    expect_single_bin_nothing_fits<ShelfSolver>();
+}
+
+// =============================================================================
+// Timeout enforcement (R6)
+// =============================================================================
+
+TEST(DeadlineHelperTest, NonPositiveTimeoutDisablesLimit) {
+    const auto now = std::chrono::steady_clock::now();
+    // A zero or negative timeout means "no limit": never reached, even for a
+    // start far in the past.
+    EXPECT_FALSE(
+        internal::deadline_reached(now - std::chrono::hours(1), std::chrono::milliseconds::zero()));
+    EXPECT_FALSE(
+        internal::deadline_reached(now - std::chrono::hours(1), std::chrono::milliseconds(-5)));
+}
+
+TEST(DeadlineHelperTest, ElapsedBeyondTimeoutIsReached) {
+    const auto now = std::chrono::steady_clock::now();
+    // Start 10ms in the past with a 1ms budget -> deadline reached.
+    EXPECT_TRUE(internal::deadline_reached(now - std::chrono::milliseconds(10),
+                                           std::chrono::milliseconds(1)));
+}
+
+TEST(DeadlineHelperTest, WithinTimeoutIsNotReached) {
+    const auto now = std::chrono::steady_clock::now();
+    // Just started with a generous budget -> not reached.
+    EXPECT_FALSE(internal::deadline_reached(now, std::chrono::seconds(60)));
+}
+
+TEST(SolverTimeoutTest, GenerousTimeoutPacksEverything) {
+    SolverConfig config;
+    config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    config.timeout = std::chrono::minutes(5);  // ample budget
+
+    std::vector<Item> items;
+    for (int i = 0; i < 50; ++i) {
+        items.push_back(Item{"box_" + std::to_string(i), {10.0, 10.0, 10.0}});
+    }
+
+    FirstFitDecreasing solver;
+    auto result = solver.solve(items, config);
+    EXPECT_EQ(result.unpacked_items.size(), 0u);
+}
+
+TEST(SolverTimeoutTest, DisabledTimeoutPacksEverything) {
+    SolverConfig config;
+    config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    config.timeout = std::chrono::milliseconds::zero();  // disabled
+
+    std::vector<Item> items;
+    for (int i = 0; i < 8; ++i) {
+        items.push_back(Item{"box_" + std::to_string(i), {20.0, 20.0, 20.0}});
+    }
+
+    FirstFitDecreasing solver;
+    auto result = solver.solve(items, config);
+    EXPECT_EQ(result.unpacked_items.size(), 0u);
+    EXPECT_EQ(result.placements.size(), items.size());
+}
+
+// =============================================================================
+// Thread budget (F9)
+// =============================================================================
+
+TEST(ThreadCountTest, SingleThreadProducesValidResult) {
+    SolverConfig config;
+    config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    config.allow_multiple_bins = true;
+    config.thread_count = 1;  // Force the parallel solver into single-wave mode.
+
+    std::vector<Item> items = {
+        Item{"a", {50.0, 50.0, 50.0}},
+        Item{"b", {30.0, 30.0, 30.0}},
+        Item{"c", {25.0, 25.0, 25.0}},
+        Item{"d", {15.0, 15.0, 15.0}},
+    };
+
+    ParallelSolver parallel;
+    auto result = parallel.solve(items, config);
+
+    // A constrained thread budget must not change correctness: all items packed.
+    EXPECT_EQ(result.unpacked_items.size(), 0u);
+    EXPECT_EQ(result.placements.size(), items.size());
+}
+
+TEST(ThreadCountTest, ThreadBudgetDoesNotChangeBestResult) {
+    SolverConfig base;
+    base.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}});
+    base.allow_multiple_bins = true;
+
+    std::vector<Item> items = {
+        Item{"a", {50.0, 50.0, 50.0}}, Item{"b", {40.0, 40.0, 40.0}}, Item{"c", {30.0, 30.0, 30.0}},
+        Item{"d", {20.0, 20.0, 20.0}}, Item{"e", {15.0, 15.0, 15.0}},
+    };
+
+    SolverConfig one = base;
+    one.thread_count = 1;
+    SolverConfig many = base;
+    many.thread_count = 8;
+
+    ParallelSolver parallel;
+    auto r1 = parallel.solve(items, one);
+    auto r8 = parallel.solve(items, many);
+
+    // The selected best result is independent of how many threads ran the search.
+    EXPECT_EQ(r1.bins_used, r8.bins_used);
+    EXPECT_EQ(r1.unpacked_items.size(), r8.unpacked_items.size());
 }
 
 }  // namespace bp3d::test

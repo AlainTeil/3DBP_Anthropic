@@ -47,7 +47,7 @@ private:
  * @return true if above is resting on below
  */
 [[nodiscard]] bool is_on_top_of(const Placement& below, const Placement& above,
-                                double tolerance = 1e-6);
+                                double tolerance = kContactTolerance);
 
 /**
  * @brief Check if a placement is supported from below
@@ -59,7 +59,7 @@ private:
  * @return true if the placement is properly supported
  */
 [[nodiscard]] bool is_supported(const Placement& proposed, std::span<const Placement> existing,
-                                double bin_floor_y = 0.0, double tolerance = 1e-6);
+                                double bin_floor_y = 0.0, double tolerance = kContactTolerance);
 
 }  // namespace bp3d
 

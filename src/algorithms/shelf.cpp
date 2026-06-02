@@ -5,19 +5,35 @@
 
 #include "bp3d/algorithms/shelf.hpp"
 
+#include "bp3d/config.hpp"
+#include "bp3d/result.hpp"
 #include "bp3d/rotation.hpp"
+#include "bp3d/types.hpp"
+#include "internal/placement_engine.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
 
 namespace bp3d {
 
 ShelfSolver::ShelfSolver(ShelfHeuristic heuristic) : heuristic_(heuristic) {}
 
+ShelfSolver::~ShelfSolver() = default;
+
 void ShelfSolver::reset(const SolverConfig& config) {
     config_ = config;
-    bins_.clear();
+    // The shared engine owns bin bookkeeping, the item registry, the spatial
+    // index and the constraint pipeline (collision, do-not-stack, weight
+    // limits). Shelves provide their own support, so support is disabled.
+    engine_ = std::make_unique<internal::PlacementEngine>(config, /*require_support=*/false);
+    shelves_.clear();
     unpacked_.clear();
     start_time_ = std::chrono::steady_clock::now();
 
@@ -26,23 +42,30 @@ void ShelfSolver::reset(const SolverConfig& config) {
     }
 }
 
-void ShelfSolver::add_bin() {
-    if (config_.bin_types.empty())
-        return;
-
-    const auto& bin_type = config_.bin_types.front();
-
-    BinState bin;
-    bin.type = bin_type;
-    bin.index = static_cast<int>(bins_.size());
-    bin.used_weight = 0.0;
-
-    bins_.push_back(std::move(bin));
+bool ShelfSolver::accept(std::size_t bin_index, const Item& item, const Placement& placement) {
+    auto& bin = engine_->bins()[bin_index];
+    if (!engine_->is_valid(item, placement, bin)) {
+        return false;
+    }
+    engine_->commit(bin, item, placement);
+    return true;
 }
 
-std::optional<Placement> ShelfSolver::try_place_on_shelf(BinState& bin, Shelf& shelf,
+void ShelfSolver::add_bin() {
+    if (config_.bin_types.empty()) {
+        return;
+    }
+
+    engine_->open_bin(config_.bin_types.front());
+    // Keep the parallel shelf list in sync with the engine's bins.
+    shelves_.emplace_back();
+}
+
+std::optional<Placement> ShelfSolver::try_place_on_shelf(std::size_t bin_index, Shelf& shelf,
                                                          const Item& item,
                                                          const Dimensions& rotated) {
+    const auto& bin = engine_->bins()[bin_index];
+
     // Check if item fits on this shelf
     if (rotated.height > shelf.height) {
         return std::nullopt;
@@ -66,26 +89,30 @@ std::optional<Placement> ShelfSolver::try_place_on_shelf(BinState& bin, Shelf& s
     Rotation used_rotation = Rotation::WHD;
 
     for (std::size_t ri = 0; ri < kRotationCount; ++ri) {
-        if (!allowed.test(ri))
+        if (!allowed.test(ri)) {
             continue;
-        Rotation rot = rotation_from_index(ri);
-        Dimensions r = apply_rotation(item.dimensions, rot);
+        }
+        Rotation const rot = rotation_from_index(ri);
+        Dimensions const r = apply_rotation(item.dimensions, rot);
         if (r.width == rotated.width && r.height == rotated.height && r.depth == rotated.depth) {
             used_rotation = rot;
             break;
         }
     }
 
-    Vector3 pos{shelf.used_width, shelf.y_position, 0.0};
+    Vector3 const pos{shelf.used_width, shelf.y_position, 0.0};
 
     return Placement{item.id, bin.type.id, bin.index, pos, used_rotation, rotated};
 }
 
-std::optional<Placement> ShelfSolver::try_new_shelf(BinState& bin, const Item& item,
+std::optional<Placement> ShelfSolver::try_new_shelf(std::size_t bin_index, const Item& item,
                                                     const Dimensions& rotated) {
+    const auto& bin = engine_->bins()[bin_index];
+    auto& shelves = shelves_[bin_index];
+
     // Calculate current shelf height
     double current_height = 0.0;
-    for (const auto& shelf : bin.shelves) {
+    for (const auto& shelf : shelves) {
         current_height = std::max(current_height, shelf.y_position + shelf.height);
     }
 
@@ -104,26 +131,27 @@ std::optional<Placement> ShelfSolver::try_new_shelf(BinState& bin, const Item& i
     }
 
     // Create new shelf
-    Shelf new_shelf{current_height, rotated.height, 0.0};
+    Shelf const new_shelf{current_height, rotated.height, 0.0};
 
     // Find the rotation
     const auto allowed = get_allowed_rotations(item.constraints);
     Rotation used_rotation = Rotation::WHD;
 
     for (std::size_t ri = 0; ri < kRotationCount; ++ri) {
-        if (!allowed.test(ri))
+        if (!allowed.test(ri)) {
             continue;
-        Rotation rot = rotation_from_index(ri);
-        Dimensions r = apply_rotation(item.dimensions, rot);
+        }
+        Rotation const rot = rotation_from_index(ri);
+        Dimensions const r = apply_rotation(item.dimensions, rot);
         if (r.width == rotated.width && r.height == rotated.height && r.depth == rotated.depth) {
             used_rotation = rot;
             break;
         }
     }
 
-    Vector3 pos{0.0, current_height, 0.0};
+    Vector3 const pos{0.0, current_height, 0.0};
 
-    bin.shelves.push_back(new_shelf);
+    shelves.push_back(new_shelf);
 
     return Placement{item.id, bin.type.id, bin.index, pos, used_rotation, rotated};
 }
@@ -134,9 +162,10 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
     // Collect all valid rotations
     std::vector<Dimensions> rotations;
     for (std::size_t ri = 0; ri < kRotationCount; ++ri) {
-        if (!allowed.test(ri))
+        if (!allowed.test(ri)) {
             continue;
-        Dimensions r = apply_rotation(item.dimensions, rotation_from_index(ri));
+        }
+        Dimensions const r = apply_rotation(item.dimensions, rotation_from_index(ri));
         // Avoid duplicates
         bool found = false;
         for (const auto& existing : rotations) {
@@ -156,18 +185,19 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
               [](const Dimensions& a, const Dimensions& b) { return a.height < b.height; });
 
     // Try each bin
-    for (auto& bin : bins_) {
+    auto& bins = engine_->bins();
+    for (std::size_t bi = 0; bi < bins.size(); ++bi) {
+        auto& shelves = shelves_[bi];
+        const auto& bin_type = bins[bi].type;
         for (const auto& rotated : rotations) {
             // Based on heuristic, try different shelf selection strategies
             switch (heuristic_) {
                 case ShelfHeuristic::NextFit: {
                     // Only try the last shelf
-                    if (!bin.shelves.empty()) {
-                        auto placement = try_place_on_shelf(bin, bin.shelves.back(), item, rotated);
-                        if (placement) {
-                            bin.shelves.back().used_width += rotated.width;
-                            bin.placements.push_back(*placement);
-                            bin.used_weight += item.weight;
+                    if (!shelves.empty()) {
+                        auto placement = try_place_on_shelf(bi, shelves.back(), item, rotated);
+                        if (placement && accept(bi, item, *placement)) {
+                            shelves.back().used_width += rotated.width;
                             return placement;
                         }
                     }
@@ -176,12 +206,10 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
 
                 case ShelfHeuristic::FirstFit: {
                     // Try each shelf in order
-                    for (auto& shelf : bin.shelves) {
-                        auto placement = try_place_on_shelf(bin, shelf, item, rotated);
-                        if (placement) {
+                    for (auto& shelf : shelves) {
+                        auto placement = try_place_on_shelf(bi, shelf, item, rotated);
+                        if (placement && accept(bi, item, *placement)) {
                             shelf.used_width += rotated.width;
-                            bin.placements.push_back(*placement);
-                            bin.used_weight += item.weight;
                             return placement;
                         }
                     }
@@ -193,11 +221,11 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
                     Shelf* best_shelf = nullptr;
                     double best_remaining = std::numeric_limits<double>::max();
 
-                    for (auto& shelf : bin.shelves) {
+                    for (auto& shelf : shelves) {
                         if (rotated.height <= shelf.height &&
-                            shelf.used_width + rotated.width <= bin.type.dimensions.width) {
-                            double remaining =
-                                bin.type.dimensions.width - shelf.used_width - rotated.width;
+                            shelf.used_width + rotated.width <= bin_type.dimensions.width) {
+                            double const remaining =
+                                bin_type.dimensions.width - shelf.used_width - rotated.width;
                             if (remaining < best_remaining) {
                                 best_remaining = remaining;
                                 best_shelf = &shelf;
@@ -205,12 +233,10 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
                         }
                     }
 
-                    if (best_shelf) {
-                        auto placement = try_place_on_shelf(bin, *best_shelf, item, rotated);
-                        if (placement) {
+                    if (best_shelf != nullptr) {
+                        auto placement = try_place_on_shelf(bi, *best_shelf, item, rotated);
+                        if (placement && accept(bi, item, *placement)) {
                             best_shelf->used_width += rotated.width;
-                            bin.placements.push_back(*placement);
-                            bin.used_weight += item.weight;
                             return placement;
                         }
                     }
@@ -222,10 +248,10 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
                     Shelf* best_shelf = nullptr;
                     double best_diff = std::numeric_limits<double>::max();
 
-                    for (auto& shelf : bin.shelves) {
+                    for (auto& shelf : shelves) {
                         if (rotated.height <= shelf.height &&
-                            shelf.used_width + rotated.width <= bin.type.dimensions.width) {
-                            double diff = shelf.height - rotated.height;
+                            shelf.used_width + rotated.width <= bin_type.dimensions.width) {
+                            double const diff = shelf.height - rotated.height;
                             if (diff < best_diff) {
                                 best_diff = diff;
                                 best_shelf = &shelf;
@@ -233,12 +259,10 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
                         }
                     }
 
-                    if (best_shelf) {
-                        auto placement = try_place_on_shelf(bin, *best_shelf, item, rotated);
-                        if (placement) {
+                    if (best_shelf != nullptr) {
+                        auto placement = try_place_on_shelf(bi, *best_shelf, item, rotated);
+                        if (placement && accept(bi, item, *placement)) {
                             best_shelf->used_width += rotated.width;
-                            bin.placements.push_back(*placement);
-                            bin.used_weight += item.weight;
                             return placement;
                         }
                     }
@@ -247,12 +271,13 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
             }
 
             // Try creating a new shelf
-            auto placement = try_new_shelf(bin, item, rotated);
+            auto placement = try_new_shelf(bi, item, rotated);
             if (placement) {
-                bin.shelves.back().used_width = rotated.width;
-                bin.placements.push_back(*placement);
-                bin.used_weight += item.weight;
-                return placement;
+                if (accept(bi, item, *placement)) {
+                    shelves.back().used_width = rotated.width;
+                    return placement;
+                }
+                shelves.pop_back();
             }
         }
     }
@@ -260,15 +285,16 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
     // Try adding a new bin
     if (config_.allow_multiple_bins) {
         add_bin();
-        if (!bins_.empty()) {
-            auto& new_bin = bins_.back();
+        if (!bins.empty()) {
+            const std::size_t bi = bins.size() - 1;
             for (const auto& rotated : rotations) {
-                auto placement = try_new_shelf(new_bin, item, rotated);
+                auto placement = try_new_shelf(bi, item, rotated);
                 if (placement) {
-                    new_bin.shelves.back().used_width = rotated.width;
-                    new_bin.placements.push_back(*placement);
-                    new_bin.used_weight += item.weight;
-                    return placement;
+                    if (accept(bi, item, *placement)) {
+                        shelves_[bi].back().used_width = rotated.width;
+                        return placement;
+                    }
+                    shelves_[bi].pop_back();
                 }
             }
         }
@@ -279,41 +305,7 @@ std::optional<Placement> ShelfSolver::pack_one(const Item& item) {
 }
 
 PackingResult ShelfSolver::finalize() {
-    auto end_time = std::chrono::steady_clock::now();
-
-    PackingResult result;
-    result.algorithm = std::string(name());
-    result.bins_used = static_cast<int>(bins_.size());
-    result.unpacked_items = unpacked_;
-
-    double total_item_volume = 0.0;
-    double total_bin_volume = 0.0;
-
-    for (const auto& bin : bins_) {
-        for (const auto& p : bin.placements) {
-            result.placements.push_back(p);
-            total_item_volume += p.rotated_dimensions.volume();
-        }
-        if (!bin.placements.empty()) {
-            total_bin_volume += bin.type.volume();
-        }
-    }
-
-    // Don't count empty bins
-    result.bins_used = 0;
-    for (const auto& bin : bins_) {
-        if (!bin.placements.empty()) {
-            result.bins_used++;
-        }
-    }
-
-    result.stats.total_item_volume = total_item_volume;
-    result.stats.total_bin_volume = total_bin_volume;
-    result.stats.utilization = total_bin_volume > 0 ? total_item_volume / total_bin_volume : 0.0;
-    result.stats.execution_time =
-        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_);
-
-    return result;
+    return internal::make_result(std::string(name()), engine_->bins(), unpacked_, start_time_);
 }
 
 PackingResult ShelfSolver::solve(std::span<const Item> items, const SolverConfig& config) {
@@ -325,6 +317,12 @@ PackingResult ShelfSolver::solve(std::span<const Item> items, const SolverConfig
             single.quantity = 1;
             if (item.quantity > 1) {
                 single.id = item.id + "_" + std::to_string(i + 1);
+            }
+            // Honour the solving time budget: once exceeded, remaining items
+            // are reported as unpacked rather than packed.
+            if (internal::deadline_reached(start_time_, config.timeout)) {
+                unpacked_.push_back(single.id);
+                continue;
             }
             (void)pack_one(single);
         }

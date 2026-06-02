@@ -3,6 +3,8 @@
  * @brief Unit tests for JSON serialization
  */
 
+#include "test_support.hpp"
+
 #include <bp3d/io/json_serializer.hpp>
 
 #include <gtest/gtest.h>
@@ -16,12 +18,9 @@ class JsonTest : public ::testing::Test {
 protected:
     std::filesystem::path temp_dir;
 
-    void SetUp() override {
-        temp_dir = std::filesystem::temp_directory_path() / "bp3d_test";
-        std::filesystem::create_directories(temp_dir);
-    }
+    void SetUp() override { temp_dir = make_unique_temp_dir("json"); }
 
-    void TearDown() override { std::filesystem::remove_all(temp_dir); }
+    void TearDown() override { remove_temp_dir(temp_dir); }
 };
 
 TEST_F(JsonTest, ItemsToFromJson) {

@@ -3,13 +3,22 @@
  * @brief CLI application for bp3d bin packing
  */
 
-#include <bp3d/algorithms/parallel_solver.hpp>
-#include <bp3d/bp3d.hpp>
+#include "bp3d/config.hpp"
+#include "bp3d/io/json_serializer.hpp"
+#include "bp3d/io/obj_exporter.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/rotation.hpp"
+#include "bp3d/solver.hpp"
+#include "bp3d/types.hpp"
 
-#include <algorithm>
+#include <bp3d/algorithms/parallel_solver.hpp>
+
 #include <chrono>
+#include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -88,7 +97,7 @@ void print_result(const bp3d::PackingResult& result, bool verbose) {
 }
 
 void compare_algorithms(const std::vector<bp3d::Item>& items, const bp3d::SolverConfig& config) {
-    std::vector<bp3d::Algorithm> algorithms = {
+    std::vector<bp3d::Algorithm> const algorithms = {
         bp3d::Algorithm::FirstFitDecreasing, bp3d::Algorithm::BestFitDecreasing,
         bp3d::Algorithm::Guillotine, bp3d::Algorithm::ExtremePoint, bp3d::Algorithm::Shelf};
 
@@ -98,7 +107,7 @@ void compare_algorithms(const std::vector<bp3d::Item>& items, const bp3d::Solver
               << "\n";
     std::cout << std::string(70, '-') << "\n";
 
-    for (bp3d::Algorithm algo : algorithms) {
+    for (bp3d::Algorithm const algo : algorithms) {
         auto solver = bp3d::create_solver(algo);
         auto result = solver->solve(items, config);
 
@@ -125,7 +134,7 @@ int main(int argc, char* argv[]) {
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
+        std::string const arg = argv[i];
 
         if (arg == "-h" || arg == "--help") {
             print_usage(argv[0]);

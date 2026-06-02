@@ -89,11 +89,14 @@ jobs:
           -G Ninja \
           -DCMAKE_BUILD_TYPE=Debug \
           -DCMAKE_CXX_COMPILER=clang++ \
-          -DBP3D_ENABLE_CLANG_TIDY=ON \
           -DBP3D_BUILD_TESTS=ON
-    
-    - name: Build with clang-tidy
-      run: cmake --build build --parallel
+
+    - name: Run clang-tidy (gated)
+      # WarningsAsErrors in .clang-tidy makes any finding fail the job.
+      # Scope is library + application code; tests are intentionally excluded.
+      run: |
+        run-clang-tidy -p build -quiet \
+          "^$PWD/(src|include|app)/"
 
   # =============================================================================
   # AddressSanitizer + UndefinedBehaviorSanitizer

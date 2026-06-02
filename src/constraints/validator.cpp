@@ -8,6 +8,12 @@
 #include "bp3d/constraints/collision.hpp"
 #include "bp3d/constraints/stacking.hpp"
 #include "bp3d/constraints/weight.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+
+#include <memory>
+#include <span>
+#include <utility>
 
 namespace bp3d {
 
@@ -28,13 +34,17 @@ bool CompositeValidator::can_place(const Item& item, const Placement& proposed,
     return true;
 }
 
-std::unique_ptr<CompositeValidator> create_default_validator() {
+std::unique_ptr<CompositeValidator> create_default_validator(bool require_support) {
     auto composite = std::make_unique<CompositeValidator>();
     composite->add(std::make_unique<CollisionValidator>());
-    composite->add(std::make_unique<StackingValidator>(true));
-    // Note: WeightValidator requires item_weights to be set externally
+    composite->add(std::make_unique<StackingValidator>(require_support));
+    // Note: WeightValidator looks up existing item weights via the registry.
     composite->add(std::make_unique<WeightValidator>());
     return composite;
+}
+
+std::unique_ptr<CompositeValidator> create_default_validator() {
+    return create_default_validator(true);
 }
 
 }  // namespace bp3d

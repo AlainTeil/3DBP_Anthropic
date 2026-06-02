@@ -3,6 +3,8 @@
  * @brief Unit tests for OBJ export functionality
  */
 
+#include "test_support.hpp"
+
 #include <bp3d/io/obj_exporter.hpp>
 
 #include <gtest/gtest.h>
@@ -19,8 +21,7 @@ protected:
     std::vector<BinType> bin_types;
 
     void SetUp() override {
-        temp_dir = std::filesystem::temp_directory_path() / "bp3d_obj_test";
-        std::filesystem::create_directories(temp_dir);
+        temp_dir = make_unique_temp_dir("obj");
 
         bin_types.push_back(BinType{"standard", {100.0, 100.0, 100.0}});
 
@@ -32,7 +33,7 @@ protected:
             Placement{"item2", "standard", 0, {20.0, 0.0, 0.0}, Rotation::WHD, {15.0, 15.0, 15.0}});
     }
 
-    void TearDown() override { std::filesystem::remove_all(temp_dir); }
+    void TearDown() override { remove_temp_dir(temp_dir); }
 };
 
 TEST_F(ObjExportTest, GenerateObjStringNotEmpty) {

@@ -3,6 +3,13 @@
 
 include(FetchContent)
 
+# Third-party sources must not be analyzed by clang-tidy: they generate
+# thousands of findings and our gate treats warnings as errors. Disable any
+# globally-configured analyzer while the dependencies are made available, then
+# restore it so our own targets are still checked.
+set(_bp3d_saved_clang_tidy "${CMAKE_CXX_CLANG_TIDY}")
+set(CMAKE_CXX_CLANG_TIDY "")
+
 # nlohmann/json - JSON for Modern C++
 FetchContent_Declare(
     nlohmann_json
@@ -32,3 +39,7 @@ if(BP3D_BUILD_TESTS)
     message(STATUS "Fetching GoogleTest...")
     FetchContent_MakeAvailable(googletest)
 endif()
+
+# Restore the analyzer configuration for the project's own targets.
+set(CMAKE_CXX_CLANG_TIDY "${_bp3d_saved_clang_tidy}")
+unset(_bp3d_saved_clang_tidy)

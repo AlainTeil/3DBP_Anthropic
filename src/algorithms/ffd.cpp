@@ -5,189 +5,81 @@
 
 #include "bp3d/algorithms/ffd.hpp"
 
-#include "bp3d/constraints/collision.hpp"
-#include "bp3d/rotation.hpp"
+#include "bp3d/config.hpp"
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+#include "internal/placement_engine.hpp"
 #include "internal/sorting.hpp"
 
-#include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace bp3d {
 
 namespace {
 
-/// State of a single bin during packing
-struct BinState {
-    BinType type;
-    int index;
-    std::vector<Placement> placements;
-    double used_weight;
-    double used_volume;
-};
-
-/// Try to find a position for the item in the bin
-std::optional<Placement> find_placement(const Item& item, BinState& bin) {
-    const auto allowed = get_allowed_rotations(item.constraints);
-
-    // Check weight limit
-    if (bin.used_weight + item.weight > bin.type.max_weight) {
-        return std::nullopt;
+/// Bottom-left-back ordering: prefer low y, then low z, then low x.
+bool bottom_left_back(const Vector3& a, const Vector3& b) {
+    if (a.y != b.y) {
+        return a.y < b.y;
     }
-
-    // Try each allowed rotation
-    for (std::size_t ri = 0; ri < kRotationCount; ++ri) {
-        if (!allowed.test(ri))
-            continue;
-
-        Rotation rotation = rotation_from_index(ri);
-        Dimensions rotated = apply_rotation(item.dimensions, rotation);
-
-        // Quick check: does it fit in the bin at all?
-        if (rotated.width > bin.type.dimensions.width ||
-            rotated.height > bin.type.dimensions.height ||
-            rotated.depth > bin.type.dimensions.depth) {
-            continue;
-        }
-
-        // Try corner positions for efficient placement
-        // (Grid-based fallback could be added with configurable step size)
-
-        // First try corner positions (optimization)
-        std::vector<Vector3> candidates;
-        candidates.push_back({0, 0, 0});
-
-        // Add positions at corners of existing items
-        for (const auto& p : bin.placements) {
-            // Right of item
-            candidates.push_back({p.position.x + p.rotated_dimensions.width, 0, 0});
-            candidates.push_back({p.position.x + p.rotated_dimensions.width, p.position.y, 0});
-            candidates.push_back(
-                {p.position.x + p.rotated_dimensions.width, p.position.y, p.position.z});
-
-            // On top of item
-            candidates.push_back(
-                {p.position.x, p.position.y + p.rotated_dimensions.height, p.position.z});
-            candidates.push_back({0, p.position.y + p.rotated_dimensions.height, 0});
-
-            // Behind item
-            candidates.push_back(
-                {p.position.x, p.position.y, p.position.z + p.rotated_dimensions.depth});
-            candidates.push_back({0, 0, p.position.z + p.rotated_dimensions.depth});
-        }
-
-        // Sort by bottom-left-back preference (y, then z, then x)
-        std::sort(candidates.begin(), candidates.end(), [](const Vector3& a, const Vector3& b) {
-            if (a.y != b.y)
-                return a.y < b.y;
-            if (a.z != b.z)
-                return a.z < b.z;
-            return a.x < b.x;
-        });
-
-        // Try each candidate position
-        for (const auto& pos : candidates) {
-            // Check bounds
-            if (pos.x + rotated.width > bin.type.dimensions.width ||
-                pos.y + rotated.height > bin.type.dimensions.height ||
-                pos.z + rotated.depth > bin.type.dimensions.depth) {
-                continue;
-            }
-
-            Placement proposed{item.id, bin.type.id, bin.index, pos, rotation, rotated};
-
-            // Check for collisions
-            bool valid = true;
-            for (const auto& existing : bin.placements) {
-                if (placements_overlap(proposed, existing)) {
-                    valid = false;
-                    break;
-                }
-            }
-
-            if (valid) {
-                // Check support (must be on floor or supported by another item)
-                bool supported = (pos.y < 1e-6);  // On floor
-                if (!supported) {
-                    for (const auto& existing : bin.placements) {
-                        double existing_top =
-                            existing.position.y + existing.rotated_dimensions.height;
-                        if (std::abs(existing_top - pos.y) < 1e-6) {
-                            // Check XZ overlap
-                            if (existing.position.x < pos.x + rotated.width &&
-                                pos.x < existing.position.x + existing.rotated_dimensions.width &&
-                                existing.position.z < pos.z + rotated.depth &&
-                                pos.z < existing.position.z + existing.rotated_dimensions.depth) {
-                                supported = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (supported) {
-                    return proposed;
-                }
-            }
-        }
+    if (a.z != b.z) {
+        return a.z < b.z;
     }
-
-    return std::nullopt;
+    return a.x < b.x;
 }
 
 }  // namespace
 
 PackingResult FirstFitDecreasing::solve(std::span<const Item> items, const SolverConfig& config) {
-    auto start_time = std::chrono::steady_clock::now();
-
-    PackingResult result;
-    result.algorithm = std::string(name());
+    const auto start_time = std::chrono::steady_clock::now();
 
     if (items.empty() || config.bin_types.empty()) {
-        return result;
+        PackingResult empty;
+        empty.algorithm = std::string(name());
+        return empty;
     }
 
-    // Expand quantities and sort by volume descending
+    // Expand quantities and sort by volume descending.
     auto expanded = internal::expand_quantities(items);
     internal::sort_items(expanded, internal::SortCriteria::VolumeDescending);
 
-    // Track bins
-    std::vector<BinState> bins;
+    internal::PlacementEngine engine(config, /*require_support=*/true);
     std::vector<std::string> unpacked;
 
-    // Process each item
     for (const auto& item : expanded) {
-        bool placed = false;
+        // Honour the solving time budget: once exceeded, remaining items are
+        // reported as unpacked rather than packed.
+        if (internal::deadline_reached(start_time, config.timeout)) {
+            unpacked.push_back(item.id);
+            continue;
+        }
 
-        // Try existing bins (first fit)
-        for (auto& bin : bins) {
-            auto placement = find_placement(item, bin);
-            if (placement) {
-                bin.placements.push_back(*placement);
-                bin.used_weight += item.weight;
-                bin.used_volume += item.volume();
-                result.placements.push_back(*placement);
+        bool placed = false;
+        for (auto& bin : engine.bins()) {
+            if (auto placement = engine.find_first_fit(item, bin, bottom_left_back)) {
+                engine.commit(bin, item, *placement);
                 placed = true;
                 break;
             }
         }
 
-        // If not placed, try a new bin
-        if (!placed && config.allow_multiple_bins) {
-            // Find smallest bin that can fit the item
+        // Otherwise open a new bin (smallest bin type that fits, in input order).
+        // Always permit the first bin; additional bins require allow_multiple_bins.
+        if (!placed && (config.allow_multiple_bins || engine.bins().empty())) {
             for (const auto& bin_type : config.bin_types) {
-                BinState new_bin{bin_type, static_cast<int>(bins.size()), {}, 0.0, 0.0};
-
-                auto placement = find_placement(item, new_bin);
-                if (placement) {
-                    new_bin.placements.push_back(*placement);
-                    new_bin.used_weight += item.weight;
-                    new_bin.used_volume += item.volume();
-                    bins.push_back(std::move(new_bin));
-                    result.placements.push_back(*placement);
+                const int idx = engine.open_bin(bin_type);
+                auto& bin = engine.bins()[static_cast<std::size_t>(idx)];
+                if (auto placement = engine.find_first_fit(item, bin, bottom_left_back)) {
+                    engine.commit(bin, item, *placement);
                     placed = true;
                     break;
                 }
+                engine.discard_last_bin_if_empty();
             }
         }
 
@@ -196,26 +88,8 @@ PackingResult FirstFitDecreasing::solve(std::span<const Item> items, const Solve
         }
     }
 
-    // Compute statistics
-    result.bins_used = static_cast<int>(bins.size());
-    result.unpacked_items = std::move(unpacked);
-
-    double total_item_volume = 0.0;
-    double total_bin_volume = 0.0;
-    for (const auto& bin : bins) {
-        total_item_volume += bin.used_volume;
-        total_bin_volume += bin.type.volume();
-    }
-
-    result.stats.total_item_volume = total_item_volume;
-    result.stats.total_bin_volume = total_bin_volume;
-    result.stats.utilization = total_bin_volume > 0 ? total_item_volume / total_bin_volume : 0.0;
-
-    auto end_time = std::chrono::steady_clock::now();
-    result.stats.execution_time =
-        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-
-    return result;
+    return internal::make_result(std::string(name()), engine.bins(), std::move(unpacked),
+                                 start_time);
 }
 
 }  // namespace bp3d

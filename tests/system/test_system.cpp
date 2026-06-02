@@ -3,6 +3,8 @@
  * @brief System tests for end-to-end CLI and workflow testing
  */
 
+#include "test_support.hpp"
+
 #include <bp3d/algorithms/bfd.hpp>
 #include <bp3d/algorithms/extreme_point.hpp>
 #include <bp3d/algorithms/ffd.hpp>
@@ -21,6 +23,9 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace bp3d::test {
 
@@ -50,12 +55,9 @@ class SystemWorkflowTest : public ::testing::Test {
 protected:
     std::filesystem::path temp_dir;
 
-    void SetUp() override {
-        temp_dir = std::filesystem::temp_directory_path() / "bp3d_system_test";
-        std::filesystem::create_directories(temp_dir);
-    }
+    void SetUp() override { temp_dir = make_unique_temp_dir("system"); }
 
-    void TearDown() override { std::filesystem::remove_all(temp_dir); }
+    void TearDown() override { remove_temp_dir(temp_dir); }
 
     void create_input_file(const std::string& name, const std::string& content) {
         std::ofstream file(temp_dir / name);
@@ -278,12 +280,9 @@ class ScenarioTest : public ::testing::Test {
 protected:
     std::filesystem::path temp_dir;
 
-    void SetUp() override {
-        temp_dir = std::filesystem::temp_directory_path() / "bp3d_scenario_test";
-        std::filesystem::create_directories(temp_dir);
-    }
+    void SetUp() override { temp_dir = make_unique_temp_dir("scenario"); }
 
-    void TearDown() override { std::filesystem::remove_all(temp_dir); }
+    void TearDown() override { remove_temp_dir(temp_dir); }
 };
 
 TEST_F(ScenarioTest, WarehousePackingScenario) {
@@ -446,6 +445,59 @@ TEST_F(PerformanceTest, AllAlgorithmsComplete) {
         auto duration =
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         EXPECT_LT(duration.count(), 10000) << "Algorithm " << result.algorithm << " took too long";
+    }
+}
+
+/**
+ * @brief Large-N benchmark exercising the spatial-index accelerated engine.
+ *
+ * Packs a large, dense item set (filling multiple bins) and verifies both that
+ * it completes in a reasonable time and that the spatial-index neighbour
+ * narrowing did not introduce any missed collisions.
+ *
+ * The time ceiling is deliberately generous: this same test runs under
+ * unoptimized Debug builds and under ASan/TSan instrumentation, so it guards
+ * against gross regressions (e.g. losing the spatial index and reverting to a
+ * full O(n) collision scan per candidate) rather than asserting a tight bound.
+ */
+TEST_F(PerformanceTest, LargeProblemPacksDenselyWithoutOverlaps) {
+    // 600 unit cubes; 1000 of them exactly fill one 100^3 bin, so this packs
+    // into a single densely populated bin and stresses the per-bin neighbour
+    // index the most.
+    constexpr int kItemCount = 600;
+    std::vector<Item> items;
+    items.reserve(kItemCount);
+    for (int i = 0; i < kItemCount; ++i) {
+        items.push_back(Item{"item_" + std::to_string(i), {10.0, 10.0, 10.0}});
+    }
+
+    FirstFitDecreasing solver;
+    const auto start = std::chrono::high_resolution_clock::now();
+    auto result = solver.solve(items, config);
+    const auto end = std::chrono::high_resolution_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    // Every item should be accounted for and, given the perfect fit, packed.
+    EXPECT_EQ(result.placements.size(), static_cast<std::size_t>(kItemCount));
+    EXPECT_TRUE(result.unpacked_items.empty());
+
+    // Generous ceiling spanning Debug + sanitizer builds; a regression to the
+    // previous O(n) per-candidate collision scan would blow straight through it.
+    EXPECT_LT(duration.count(), 60000);
+
+    // Correctness guard: no two placements in the same bin may overlap.
+    std::unordered_map<int, std::vector<const Placement*>> by_bin;
+    for (const auto& p : result.placements) {
+        by_bin[p.bin_index].push_back(&p);
+    }
+    for (const auto& [bin_index, placements] : by_bin) {
+        for (std::size_t i = 0; i < placements.size(); ++i) {
+            for (std::size_t j = i + 1; j < placements.size(); ++j) {
+                ASSERT_FALSE(placements_overlap(*placements[i], *placements[j]))
+                    << "overlap in bin " << bin_index << " between placements " << i << " and "
+                    << j;
+            }
+        }
     }
 }
 

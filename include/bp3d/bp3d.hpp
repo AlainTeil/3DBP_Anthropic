@@ -37,7 +37,7 @@
  * - All 6 orthogonal rotations
  * - Multi-threaded execution
  *
- * @example Basic usage:
+ * @par Basic usage:
  * @code
  * #include <bp3d/bp3d.hpp>
  *

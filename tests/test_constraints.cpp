@@ -3,6 +3,8 @@
  * @brief Unit tests for constraint validators
  */
 
+#include <bp3d/algorithms/extreme_point.hpp>
+#include <bp3d/algorithms/ffd.hpp>
 #include <bp3d/constraints/collision.hpp>
 #include <bp3d/constraints/stacking.hpp>
 #include <bp3d/constraints/validator.hpp>
@@ -11,6 +13,9 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <limits>
+#include <vector>
 
 namespace bp3d::test {
 
@@ -161,6 +166,98 @@ TEST(CompositeValidatorTest, AllPass) {
     Placement candidate{"item", "bin1", 0, {0.0, 0.0, 0.0}, Rotation::WHD, {10.0, 10.0, 10.0}};
 
     EXPECT_TRUE(validator.can_place(item, candidate, empty, bin));
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end enforcement: constraints must be honored through solve(), not
+// just by the standalone validators. These scenarios pin a single bin so that
+// the only way to place the second item is on top of the first.
+// ---------------------------------------------------------------------------
+
+class SolveConstraintTest : public ::testing::Test {
+protected:
+    SolverConfig config;
+
+    void SetUp() override { config.bin_types.push_back(BinType{"bin", {100.0, 100.0, 100.0}}); }
+
+    // Bottom item fills the floor; top item can only be stacked on it.
+    static std::vector<Item> stack_scenario(bool bottom_stackable, double bottom_max_stack_weight,
+                                            double top_weight) {
+        Item bottom{"bottom", {100.0, 60.0, 100.0}};
+        bottom.weight = 10.0;
+        bottom.constraints.stackable = bottom_stackable;
+        bottom.constraints.max_stack_weight = bottom_max_stack_weight;
+
+        Item top{"top", {100.0, 40.0, 100.0}};
+        top.weight = top_weight;
+
+        return {bottom, top};  // bottom has larger volume -> placed first by FFD
+    }
+};
+
+// FFD only opens bins when multiple bins are permitted; when a constraint
+// forbids stacking, the rejected item is pushed into a *second* bin instead of
+// being placed on top, so bins_used is the observable signal.
+TEST_F(SolveConstraintTest, FFD_DoNotStackIsEnforced) {
+    constexpr double kNoLimit = std::numeric_limits<double>::max();
+    config.allow_multiple_bins = true;
+    FirstFitDecreasing solver;
+
+    // Control: a stackable base lets the top item stack in the same bin.
+    auto control = solver.solve(stack_scenario(true, kNoLimit, 1.0), config);
+    EXPECT_TRUE(control.unpacked_items.empty());
+    EXPECT_EQ(control.placements.size(), 2u);
+    EXPECT_EQ(control.bins_used, 1);
+
+    // Non-stackable base forces the top item into a new bin.
+    auto result = solver.solve(stack_scenario(false, kNoLimit, 1.0), config);
+    EXPECT_TRUE(result.unpacked_items.empty());
+    EXPECT_EQ(result.placements.size(), 2u);
+    EXPECT_EQ(result.bins_used, 2);
+}
+
+TEST_F(SolveConstraintTest, FFD_MaxStackWeightIsEnforced) {
+    config.allow_multiple_bins = true;
+    FirstFitDecreasing solver;
+
+    // Control: generous stack-weight limit -> top item stacks in the same bin.
+    auto control = solver.solve(stack_scenario(true, 20.0, 10.0), config);
+    EXPECT_TRUE(control.unpacked_items.empty());
+    EXPECT_EQ(control.bins_used, 1);
+
+    // Top item is heavier than the base can bear -> forced into a new bin.
+    auto result = solver.solve(stack_scenario(true, 5.0, 10.0), config);
+    EXPECT_TRUE(result.unpacked_items.empty());
+    EXPECT_EQ(result.bins_used, 2);
+}
+
+TEST_F(SolveConstraintTest, ExtremePoint_DoNotStackIsEnforced) {
+    constexpr double kNoLimit = std::numeric_limits<double>::max();
+    config.allow_multiple_bins = false;  // single bin -> rejected item is unpacked
+    ExtremePointSolver solver;
+
+    auto control = solver.solve(stack_scenario(true, kNoLimit, 1.0), config);
+    EXPECT_TRUE(control.unpacked_items.empty());
+    EXPECT_EQ(control.placements.size(), 2u);
+
+    auto result = solver.solve(stack_scenario(false, kNoLimit, 1.0), config);
+    ASSERT_EQ(result.unpacked_items.size(), 1u);
+    EXPECT_EQ(result.unpacked_items.front(), "top");
+    EXPECT_EQ(result.placements.size(), 1u);
+}
+
+TEST_F(SolveConstraintTest, ExtremePoint_MaxStackWeightIsEnforced) {
+    config.allow_multiple_bins = false;
+    ExtremePointSolver solver;
+
+    auto control = solver.solve(stack_scenario(true, 20.0, 10.0), config);
+    EXPECT_TRUE(control.unpacked_items.empty());
+    EXPECT_EQ(control.placements.size(), 2u);
+
+    auto result = solver.solve(stack_scenario(true, 5.0, 10.0), config);
+    ASSERT_EQ(result.unpacked_items.size(), 1u);
+    EXPECT_EQ(result.unpacked_items.front(), "top");
+    EXPECT_EQ(result.placements.size(), 1u);
 }
 
 }  // namespace bp3d::test

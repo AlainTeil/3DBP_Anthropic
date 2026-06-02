@@ -8,9 +8,16 @@
 
 #include "bp3d/solver.hpp"
 
+#include <chrono>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace bp3d {
+
+namespace internal {
+class PlacementEngine;
+}  // namespace internal
 
 /**
  * @brief Shelf selection heuristic
@@ -42,6 +49,8 @@ public:
      */
     explicit ShelfSolver(ShelfHeuristic heuristic = ShelfHeuristic::FirstFit);
 
+    ~ShelfSolver() override;
+
     // IOnlineSolver interface
     void reset(const SolverConfig& config) override;
     [[nodiscard]] std::optional<Placement> pack_one(const Item& item) override;
@@ -64,25 +73,28 @@ private:
         double used_width;
     };
 
-    /// Per-bin state
-    struct BinState {
-        BinType type;
-        int index;
-        std::vector<Placement> placements;
-        std::vector<Shelf> shelves;
-        double used_weight;
-    };
+    /// Shared engine: owns bin bookkeeping, the item registry, the spatial
+    /// index and the constraint pipeline (collision, do-not-stack, weight
+    /// limits; shelves provide their own support so support is disabled).
+    std::unique_ptr<internal::PlacementEngine> engine_;
 
-    std::vector<BinState> bins_;
+    /// Per-bin shelf list (the only algorithm-specific state), kept in a vector
+    /// parallel to engine_->bins().
+    std::vector<std::vector<Shelf>> shelves_;
+
     std::vector<std::string> unpacked_;
     std::chrono::steady_clock::time_point start_time_;
 
+    /// Validate a placement and, if accepted, commit it to the bin/registry.
+    [[nodiscard]] bool accept(std::size_t bin_index, const Item& item, const Placement& placement);
+
     /// Try to place item on a shelf
-    [[nodiscard]] std::optional<Placement>
-    try_place_on_shelf(BinState& bin, Shelf& shelf, const Item& item, const Dimensions& rotated);
+    [[nodiscard]] std::optional<Placement> try_place_on_shelf(std::size_t bin_index, Shelf& shelf,
+                                                              const Item& item,
+                                                              const Dimensions& rotated);
 
     /// Try to create a new shelf and place item
-    [[nodiscard]] std::optional<Placement> try_new_shelf(BinState& bin, const Item& item,
+    [[nodiscard]] std::optional<Placement> try_new_shelf(std::size_t bin_index, const Item& item,
                                                          const Dimensions& rotated);
 
     /// Add a new bin

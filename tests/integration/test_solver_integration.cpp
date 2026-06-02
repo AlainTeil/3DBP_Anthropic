@@ -253,9 +253,7 @@ TEST_F(AlgorithmValidationTest, BFDProducesValidResult) {
 TEST_F(AlgorithmValidationTest, GuillotineProducesValidResult) {
     GuillotineSolver solver;
     auto result = solver.solve(items, config);
-    // Known issue: Guillotine algorithm may produce overlapping placements
-    // in some configurations. Skip validation for now.
-    // TODO: Fix guillotine algorithm overlap detection
+    validate_result(result, "Guillotine");
     EXPECT_GT(result.placements.size(), 0);
 }
 

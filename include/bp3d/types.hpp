@@ -14,6 +14,23 @@
 namespace bp3d {
 
 /**
+ * @brief General geometric equality tolerance.
+ *
+ * Used when comparing coordinates/dimensions for exact coincidence
+ * (e.g. deduplicating points, equality with rounding noise).
+ */
+inline constexpr double kEpsilon = 1e-9;
+
+/**
+ * @brief Surface-contact tolerance.
+ *
+ * Used for "touching" relationships such as support and stacking, where a
+ * slightly looser tolerance than @ref kEpsilon is appropriate to absorb
+ * accumulated floating-point error along stacked faces.
+ */
+inline constexpr double kContactTolerance = 1e-6;
+
+/**
  * @brief 3D dimensions with named axes
  *
  * Convention: Y is the vertical axis (height), X is width, Z is depth.
@@ -37,7 +54,7 @@ struct Dimensions {
     }
 
     /// Equality comparison with tolerance
-    [[nodiscard]] bool equals(const Dimensions& other, double epsilon = 1e-9) const noexcept {
+    [[nodiscard]] bool equals(const Dimensions& other, double epsilon = kEpsilon) const noexcept {
         return std::abs(width - other.width) < epsilon &&
                std::abs(height - other.height) < epsilon && std::abs(depth - other.depth) < epsilon;
     }
@@ -64,7 +81,7 @@ struct Vector3 {
     constexpr bool operator==(const Vector3& other) const noexcept = default;
 
     /// Equality comparison with tolerance
-    [[nodiscard]] bool equals(const Vector3& other, double epsilon = 1e-9) const noexcept {
+    [[nodiscard]] bool equals(const Vector3& other, double epsilon = kEpsilon) const noexcept {
         return std::abs(x - other.x) < epsilon && std::abs(y - other.y) < epsilon &&
                std::abs(z - other.z) < epsilon;
     }
@@ -121,7 +138,9 @@ struct BinType {
     std::string id;                                          ///< Unique identifier
     Dimensions dimensions;                                   ///< Inner dimensions
     double max_weight = std::numeric_limits<double>::max();  ///< Maximum total weight
-    double cost = 1.0;  ///< Cost of using this bin (for optimization)
+    double cost = 1.0;  ///< Relative cost of using this bin. The Extreme Point
+                        ///< solver opens the cheapest bin type that fits an item;
+                        ///< other solvers select bin types in configuration order.
 
     /// Get the volume of this bin
     [[nodiscard]] double volume() const noexcept { return dimensions.volume(); }

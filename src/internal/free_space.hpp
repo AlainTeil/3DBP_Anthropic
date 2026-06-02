@@ -104,7 +104,7 @@ public:
     void update(const Vector3& position, const Dimensions& dims);
 
     /// Calculate residual space for a point
-    void update_residual_space(ExtremePoint& point, std::span<const Placement> placements);
+    void update_residual_space(ExtremePoint& point, std::span<const Placement> placements) const;
 
 private:
     Dimensions bin_dims_;

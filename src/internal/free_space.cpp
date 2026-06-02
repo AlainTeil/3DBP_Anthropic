@@ -5,8 +5,18 @@
 
 #include "free_space.hpp"
 
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+#include "geometry.hpp"
+
 #include <algorithm>
+#include <cstddef>
+#include <cstdlib>
 #include <limits>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace bp3d::internal {
 
@@ -28,7 +38,7 @@ std::optional<std::size_t> MaximalSpaceManager::find_best_fit(const Dimensions& 
     for (std::size_t i = 0; i < spaces_.size(); ++i) {
         if (spaces_[i].fits(dims)) {
             // Score by remaining volume after placement (lower is better)
-            double remaining = spaces_[i].volume() - dims.volume();
+            double const remaining = spaces_[i].volume() - dims.volume();
             if (remaining < best_score) {
                 best_score = remaining;
                 best_index = i;
@@ -40,11 +50,11 @@ std::optional<std::size_t> MaximalSpaceManager::find_best_fit(const Dimensions& 
 }
 
 void MaximalSpaceManager::place_item(const Vector3& position, const Dimensions& dims) {
-    AABB item_box = AABB::from_pos_dims(position, dims);
+    AABB const item_box = AABB::from_pos_dims(position, dims);
     std::vector<FreeSpace> new_spaces;
 
     for (const auto& space : spaces_) {
-        AABB space_box = space.to_aabb();
+        AABB const space_box = space.to_aabb();
 
         if (!item_box.overlaps(space_box)) {
             // Space is not affected
@@ -122,14 +132,16 @@ void MaximalSpaceManager::remove_redundant_spaces() {
     std::vector<bool> to_remove(spaces_.size(), false);
 
     for (std::size_t i = 0; i < spaces_.size(); ++i) {
-        if (to_remove[i])
+        if (to_remove[i]) {
             continue;
-        AABB box_i = spaces_[i].to_aabb();
+        }
+        AABB const box_i = spaces_[i].to_aabb();
 
         for (std::size_t j = i + 1; j < spaces_.size(); ++j) {
-            if (to_remove[j])
+            if (to_remove[j]) {
                 continue;
-            AABB box_j = spaces_[j].to_aabb();
+            }
+            AABB const box_j = spaces_[j].to_aabb();
 
             if (box_i.contains(box_j)) {
                 to_remove[j] = true;
@@ -175,9 +187,9 @@ void ExtremePointManager::update(const Vector3& position, const Dimensions& dims
     // that are not inside other items
 
     // Point at back-top-right of placed item
-    Vector3 p1 = {position.x + dims.width, position.y, position.z};
-    Vector3 p2 = {position.x, position.y + dims.height, position.z};
-    Vector3 p3 = {position.x, position.y, position.z + dims.depth};
+    Vector3 const p1 = {position.x + dims.width, position.y, position.z};
+    Vector3 const p2 = {position.x, position.y + dims.height, position.z};
+    Vector3 const p3 = {position.x, position.y, position.z + dims.depth};
 
     // Calculate residual space for each new point
     auto add_point_if_valid = [this](const Vector3& p) {
@@ -185,8 +197,8 @@ void ExtremePointManager::update(const Vector3& position, const Dimensions& dims
         if (p.x >= 0 && p.x < bin_dims_.width && p.y >= 0 && p.y < bin_dims_.height && p.z >= 0 &&
             p.z < bin_dims_.depth) {
             // Calculate residual space (simplified: distance to bin walls)
-            Dimensions residual = {bin_dims_.width - p.x, bin_dims_.height - p.y,
-                                   bin_dims_.depth - p.z};
+            Dimensions const residual = {bin_dims_.width - p.x, bin_dims_.height - p.y,
+                                         bin_dims_.depth - p.z};
             if (residual.width > 0 && residual.height > 0 && residual.depth > 0) {
                 points_.push_back(ExtremePoint{p, residual});
             }
@@ -206,7 +218,7 @@ void ExtremePointManager::update(const Vector3& position, const Dimensions& dims
 }
 
 void ExtremePointManager::update_residual_space(ExtremePoint& point,
-                                                std::span<const Placement> placements) {
+                                                std::span<const Placement> placements) const {
     // Start with maximum residual space (to bin walls)
     Dimensions residual = {bin_dims_.width - point.position.x, bin_dims_.height - point.position.y,
                            bin_dims_.depth - point.position.z};
@@ -291,7 +303,7 @@ void ShelfManager::place_item(const Vector3& position, const Dimensions& dims,
                               const Placement& placement) {
     // Find the shelf this placement belongs to
     for (auto& shelf : shelves_) {
-        if (std::abs(shelf.y_position - position.y) < 1e-6) {
+        if (std::abs(shelf.y_position - position.y) < kContactTolerance) {
             shelf.used_width = position.x + dims.width;
             shelf.used_depth = std::max(shelf.used_depth, dims.depth);
             shelf.items.push_back(placement);

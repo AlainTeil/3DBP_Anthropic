@@ -8,18 +8,26 @@
 
 #include "bp3d/solver.hpp"
 
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace bp3d {
+
+namespace internal {
+class PlacementEngine;
+}  // namespace internal
 
 /**
  * @brief Point selection heuristic for extreme point algorithm
  */
 enum class ExtremePointHeuristic {
-    BottomLeft,         ///< Prefer points with lowest Y, then X, then Z
-    BottomLeftFill,     ///< Like BottomLeft but also considers fill ratio
-    TouchingPerimeter,  ///< Prefer points that maximize touching edges
-    MinWastedSpace      ///< Prefer points that minimize wasted space
+    BottomLeft,         ///< Prefer the lowest point: smallest Y, then X, then Z
+    BottomLeftFill,     ///< Prefer low points nearest the origin corner (fill gaps first)
+    TouchingPerimeter,  ///< Prefer placements with the most face contact (bin walls + neighbours)
+    MinWastedSpace      ///< Prefer placements that keep the occupied bounding box smallest
 };
 
 /**
@@ -41,6 +49,8 @@ public:
     explicit ExtremePointSolver(
         ExtremePointHeuristic heuristic = ExtremePointHeuristic::BottomLeft);
 
+    ~ExtremePointSolver() override;
+
     // IOnlineSolver interface
     void reset(const SolverConfig& config) override;
     [[nodiscard]] std::optional<Placement> pack_one(const Item& item) override;
@@ -56,28 +66,40 @@ private:
     ExtremePointHeuristic heuristic_;
     SolverConfig config_;
 
-    // Per-bin state
-    struct BinState {
-        BinType type;
-        int index;
-        std::vector<Placement> placements;
-        std::vector<Vector3> extreme_points;
-        double used_weight;
-    };
+    /// Shared engine: owns bin bookkeeping, the item registry, the spatial
+    /// index and the constraint pipeline (collision, support, do-not-stack,
+    /// weight limits).
+    std::unique_ptr<internal::PlacementEngine> engine_;
 
-    std::vector<BinState> bins_;
+    /// Per-bin incremental extreme-point set (the only algorithm-specific
+    /// state), kept in a vector parallel to engine_->bins().
+    std::vector<std::vector<Vector3>> extreme_points_;
+
     std::vector<std::string> unpacked_;
     std::chrono::steady_clock::time_point start_time_;
 
-    /// Try to place item in a specific bin at a specific point
-    [[nodiscard]] std::optional<Placement> try_place_at(BinState& bin, const Item& item,
-                                                        const Vector3& point);
+    /// Evaluate every extreme point and allowed rotation in the bin at
+    /// @p bin_index and return the placement that best satisfies the configured
+    /// heuristic, or nullopt if the item cannot be placed in this bin.
+    [[nodiscard]] std::optional<Placement> select_best_placement(std::size_t bin_index,
+                                                                 const Item& item);
 
-    /// Add a new bin
-    void add_bin();
+    /// Heuristic ranking key for a candidate placement (lexicographically
+    /// smaller is better). The key contents differ per @ref ExtremePointHeuristic.
+    [[nodiscard]] std::array<double, 3> score_placement(std::size_t bin_index,
+                                                        const Placement& placement);
+
+    /// Add a new bin. If @p item is non-null, the cheapest configured bin type
+    /// that can accommodate the item (dimensions in some allowed rotation and
+    /// weight) is chosen; otherwise the first configured bin type is used.
+    void add_bin(const Item* item = nullptr);
+
+    /// Select the bin type to open for an item: the lowest-cost configured type
+    /// that can fit the item, falling back to the first type if none fit.
+    [[nodiscard]] const BinType& select_bin_type(const Item* item) const;
 
     /// Update extreme points after placement
-    void update_extreme_points(BinState& bin, const Placement& placement);
+    void update_extreme_points(std::size_t bin_index, const Placement& placement);
 };
 
 }  // namespace bp3d

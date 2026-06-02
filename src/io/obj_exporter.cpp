@@ -5,11 +5,22 @@
 
 #include "bp3d/io/obj_exporter.hpp"
 
+#include "bp3d/result.hpp"
+#include "bp3d/types.hpp"
+
 #include <array>
+#include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <ios>
 #include <map>
+#include <span>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace bp3d {
 
@@ -40,7 +51,7 @@ std::array<double, 3> get_bin_color(int bin_index) {
 void write_box_obj(std::ostringstream& oss, const Vector3& min, const Vector3& max,
                    int& vertex_offset, double scale) {
     // 8 vertices of a box
-    std::array<std::array<double, 3>, 8> vertices = {{
+    std::array<std::array<double, 3>, 8> const vertices = {{
         {min.x * scale, min.y * scale, min.z * scale},
         {max.x * scale, min.y * scale, min.z * scale},
         {max.x * scale, max.y * scale, min.z * scale},
@@ -57,7 +68,7 @@ void write_box_obj(std::ostringstream& oss, const Vector3& min, const Vector3& m
     }
 
     // 6 faces (quads)
-    int o = vertex_offset;
+    int const o = vertex_offset;
     // Front face
     oss << "f " << o + 1 << " " << o + 2 << " " << o + 3 << " " << o + 4 << "\n";
     // Back face
@@ -78,7 +89,7 @@ void write_box_obj(std::ostringstream& oss, const Vector3& min, const Vector3& m
 void write_wireframe_obj(std::ostringstream& oss, const Vector3& min, const Vector3& max,
                          int& vertex_offset, double scale) {
     // Just vertices for wireframe
-    std::array<std::array<double, 3>, 8> vertices = {{
+    std::array<std::array<double, 3>, 8> const vertices = {{
         {min.x * scale, min.y * scale, min.z * scale},
         {max.x * scale, min.y * scale, min.z * scale},
         {max.x * scale, max.y * scale, min.z * scale},
@@ -95,7 +106,7 @@ void write_wireframe_obj(std::ostringstream& oss, const Vector3& min, const Vect
     }
 
     // Edges as line elements
-    int o = vertex_offset;
+    int const o = vertex_offset;
     // Bottom edges
     oss << "l " << o + 1 << " " << o + 2 << "\n";
     oss << "l " << o + 2 << " " << o + 6 << "\n";
@@ -172,7 +183,7 @@ std::string generate_obj_string(const PackingResult& result, std::span<const Bin
 
     // Offset for multiple bins (place them side by side)
     double bin_offset_x = 0.0;
-    double spacing = 10.0;
+    double const spacing = 10.0;
 
     int bin_num = 0;
     for (const auto& [key, placements] : bins_map) {
@@ -194,8 +205,8 @@ std::string generate_obj_string(const PackingResult& result, std::span<const Bin
             if (options.generate_mtl) {
                 oss << "usemtl bin_wireframe\n";
             }
-            Vector3 bin_min{bin_offset_x, 0, 0};
-            Vector3 bin_max{bin_offset_x + bin_dims.width, bin_dims.height, bin_dims.depth};
+            Vector3 const bin_min{bin_offset_x, 0, 0};
+            Vector3 const bin_max{bin_offset_x + bin_dims.width, bin_dims.height, bin_dims.depth};
             write_wireframe_obj(oss, bin_min, bin_max, vertex_offset, options.scale);
         }
 
@@ -206,10 +217,10 @@ std::string generate_obj_string(const PackingResult& result, std::span<const Bin
 
         for (const auto* p : placements) {
             oss << "o " << p->item_id << "\n";
-            Vector3 item_min{bin_offset_x + p->position.x, p->position.y, p->position.z};
-            Vector3 item_max{bin_offset_x + p->position.x + p->rotated_dimensions.width,
-                             p->position.y + p->rotated_dimensions.height,
-                             p->position.z + p->rotated_dimensions.depth};
+            Vector3 const item_min{bin_offset_x + p->position.x, p->position.y, p->position.z};
+            Vector3 const item_max{bin_offset_x + p->position.x + p->rotated_dimensions.width,
+                                   p->position.y + p->rotated_dimensions.height,
+                                   p->position.z + p->rotated_dimensions.depth};
             write_box_obj(oss, item_min, item_max, vertex_offset, options.scale);
         }
 

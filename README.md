@@ -29,9 +29,10 @@ A high-performance C++20 library for solving 3D bin packing problems. Implements
 
 - **Performance**:
   - Multi-threaded algorithm execution
-  - Optimized for minimizing bin count
+  - Spatial-hash grid to accelerate neighbour collision/support queries
+  - Configurable objective: minimize bins, minimize cost, or maximize utilization
 
-- **Test Coverage**: 238 tests covering algorithms, constraints, I/O, and edge cases
+- **Test Coverage**: 284 tests covering algorithms, constraints, I/O, and edge cases
 
 ## Requirements
 
@@ -55,25 +56,36 @@ ctest --preset debug
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
+
+# Run tests (from the build directory)
+ctest --output-on-failure
 ```
 
 ## Usage
 
 ### Command Line
 
-```bash
-# Pack items from JSON file
-bp3d-cli --input items.json --output result.json --algorithm ffd
+The CLI is built as `build/<preset>/app/bp3d-cli` and is not installed on your
+`PATH` by default. Invoke it via its path (the examples below assume the
+`debug` preset and are run from the project root). The input JSON file contains
+both the items and the bin types; see `tests/fixtures/*.json` for examples.
 
-# Use specific bin type
-bp3d-cli --input items.json --bins bins.json --algorithm extreme-point
+```bash
+# Pack items from a JSON file
+./build/debug/app/bp3d-cli --input tests/fixtures/simple.json --output result.json --algorithm ffd
+
+# Choose an algorithm: ffd, bfd, guillotine, extreme, shelf, parallel (default)
+./build/debug/app/bp3d-cli --input tests/fixtures/simple.json --algorithm extreme
 
 # Compare all algorithms
-bp3d-cli --input items.json --compare
+./build/debug/app/bp3d-cli --input tests/fixtures/simple.json --compare
 
 # Export visualization
-bp3d-cli --input items.json --output result.json --export-obj packing.obj
+./build/debug/app/bp3d-cli --input tests/fixtures/simple.json --output result.json --export-obj packing.obj
 ```
+
+To call it as just `bp3d-cli`, add the build directory to your `PATH`
+(e.g. `export PATH="$PWD/build/debug/app:$PATH"`).
 
 ### Library API
 
@@ -170,8 +182,8 @@ auto result = solver->finalize();
 | FFD | Offline | General purpose, good balance |
 | BFD | Offline | Better space utilization |
 | Guillotine | Offline | Rectangular cutting problems |
-| Extreme Point | Online | Real-time packing |
-| Shelf | Online | Simple, fast packing |
+| Extreme Point | Online/Offline | Real-time packing, high quality placements |
+| Shelf | Online/Offline | Simple, fast packing, uniform height items |
 
 ## Building Documentation
 
@@ -183,16 +195,20 @@ cmake --build build/debug --target docs
 
 ## Code Quality
 
+These targets require a configured build directory, so run `cmake --preset debug`
+first if `build/debug` does not exist yet.
+
 ```bash
-# Format code
+# Reformat all source files in place (modifies files)
 cmake --build build/debug --target format
 
-# Check formatting
+# Verify formatting without modifying files (fails if any file is unformatted)
 cmake --build build/debug --target format-check
 
 # Run with clang-tidy
 cmake --preset clang-tidy
 cmake --build build/clang-tidy
+ctest --preset clang-tidy
 
 # Build with AddressSanitizer + UndefinedBehaviorSanitizer
 cmake --preset asan

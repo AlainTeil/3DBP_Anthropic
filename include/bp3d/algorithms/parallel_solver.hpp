@@ -16,8 +16,9 @@ namespace bp3d {
 /**
  * @brief Parallel solver that runs multiple algorithms concurrently
  *
- * Runs several packing algorithms in parallel and returns the best result
- * (by number of bins used, then by utilization).
+ * Runs several packing algorithms in parallel and returns the best result as
+ * ranked by the configured @ref PackingObjective (minimize bins, minimize cost,
+ * or maximize utilization), always preferring a more complete packing first.
  */
 class ParallelSolver : public ISolver {
 public:
@@ -45,11 +46,25 @@ private:
 };
 
 /**
- * @brief Compare two packing results to determine which is better
+ * @brief Compare two packing results under the default objective.
+ *
+ * Equivalent to comparing under @ref PackingObjective::MinimizeBins.
  *
  * @return true if a is better than b
  */
 [[nodiscard]] bool is_better_result(const PackingResult& a, const PackingResult& b);
+
+/**
+ * @brief Compare two packing results under a specific objective.
+ *
+ * Regardless of objective, a more complete packing (fewer unpacked items) is
+ * always preferred first. Among equally complete results the objective decides:
+ * fewest bins, lowest total bin cost, or highest utilization.
+ *
+ * @return true if a is better than b under @p objective
+ */
+[[nodiscard]] bool is_better_result(const PackingResult& a, const PackingResult& b,
+                                    PackingObjective objective);
 
 }  // namespace bp3d
 
